@@ -129,6 +129,7 @@ class MuJoCoGui(Node):
                             "wrench": node.last_wrench,
                             "contact": node.last_contact,
                             "samples": list(node.samples),
+                            "sample_capacity": node.samples.maxlen,
                         })
                     return
                 if urlparse(self.path).path == "/api/processes":
