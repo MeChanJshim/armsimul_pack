@@ -129,6 +129,35 @@ Important fields:
 - `ee_body_names`: MuJoCo body names treated as the end-effector for contact
   force summation. Default is `wrist_3_link`.
 - `contact_force_deadband`: small force threshold in newtons.
+- `force_axis_sign`: per-axis sensor sign applied to the published force
+  vector, for example `[-1.0, 1.0, 1.0]` flips only the X force direction.
+
+The force-axis sign changes the reported `/armsimul/ee_wrench` sensor value and
+does not change the physical contact solution. Use it when the simulator's
+contact-force convention is opposite to the force controller convention.
+
+## Simulator GUI
+
+The companion `mujoco_simulpack_gui` package provides a browser-based control
+and analysis page. It can start and stop simulator processes, apply controller
+and contact parameters at runtime, save/load JSON setting profiles, and plot
+joint position, effort, contact force, and contact state.
+
+Start it with:
+
+```bash
+ros2 launch mujoco_simulpack_gui mujoco_simulpack_gui.launch.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:18100
+```
+
+The GUI's Contact Model section includes `+X/-X`, `+Y/-Y`, and `+Z/-Z` sensor
+force direction selectors. Apply the setting after changing it, then restart
+the simulator only when changing model or launch-level settings.
 
 ## Control Modes
 
