@@ -32,7 +32,8 @@ class MuJoCoGui(Node):
         self.port = int(self.get_parameter("port").value)
         self.simulator_node = str(self.get_parameter("simulator_node").value).rstrip("/")
         self.lock = threading.Lock()
-        self.samples = deque(maxlen=1200)
+        # Keep enough history for the browser to select a useful plot duration.
+        self.samples = deque(maxlen=60000)
         self.last_joint = {"name": [], "position": [], "velocity": [], "effort": []}
         self.last_wrench = {"force": [0.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.0]}
         self.last_contact = False
