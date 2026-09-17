@@ -1,9 +1,19 @@
 ur10_contact_sim:
   ros__parameters:
-    model_file: "models/ur10e/ur10e_contact_scene.xml"
+    model_file: "models/ur10e/ur10e_torque_contact_scene.xml"
     use_viewer: true
     publish_rate_hz: 1000.0
     simulation_rate_hz: 1000.0
+    control_mode: "inverse_dynamics_accel"  # position_pd, inverse_dynamics_accel
+
+    # IsaacSim-style joint acceleration tuning.
+    # Desired acceleration is:
+    #   qdd_des = wn^2 * (q_des - q) + 2*zeta*wn * (qd_des - qd)
+    # where wn = 2*pi*natural_frequency_hz.
+    accel_natural_frequency_hz: [6.0, 6.0, 6.0, 8.0, 8.0, 8.0]
+    accel_damping_ratio: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    accel_limit: [80.0, 80.0, 80.0, 120.0, 120.0, 120.0]
+    torque_limit: [330.0, 330.0, 150.0, 56.0, 56.0, 56.0]
 
     joint_names:
       - shoulder_pan_joint
@@ -35,3 +45,4 @@ ur10_contact_sim:
     ee_frame_id: "attachment_site"
     ee_body_names: ["wrist_3_link"]
     contact_force_deadband: 0.01
+    force_axis_sign: [1.0, 1.0, 1.0]

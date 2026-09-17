@@ -1,7 +1,7 @@
 from glob import glob
 from setuptools import find_packages, setup
 
-package_name = "armsimul_pack"
+package_name = "mujoco_simulpack"
 
 setup(
     name=package_name,
@@ -24,9 +24,9 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "realtime_joint_position_demo = armsimul_pack.realtime_joint_position_demo:main",
-            "ur10_contact_sim = armsimul_pack.ur10_contact_sim_node:main",
-            "send_joint_position = armsimul_pack.send_joint_position:main",
+            "realtime_joint_position_demo = mujoco_simulpack.realtime_joint_position_demo:main",
+            "ur10_contact_sim = mujoco_simulpack.ur10_contact_sim_node:main",
+            "send_joint_position = mujoco_simulpack.send_joint_position:main",
         ],
     },
 )

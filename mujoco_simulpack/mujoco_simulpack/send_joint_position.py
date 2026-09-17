@@ -30,7 +30,7 @@ class JointPositionSender(Node):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Send one UR10e joint position command to armsimul_pack.")
+    parser = argparse.ArgumentParser(description="Send one UR10e joint position command to mujoco_simulpack.")
     parser.add_argument("positions", nargs=6, type=float, help="Six joint positions in radians.")
     parser.add_argument("--topic", default="/armsimul/joint_position_cmd", help="JointState command topic.")
     args = parser.parse_args()

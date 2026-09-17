@@ -10,7 +10,7 @@ def generate_launch_description():
     config_file = LaunchConfiguration("config_file")
 
     default_config = PathJoinSubstitution(
-        [FindPackageShare("armsimul_pack"), "config", "ur10_contact_sim.yaml"]
+        [FindPackageShare("mujoco_simulpack"), "config", "ur10_contact_sim.yaml"]
     )
 
     return LaunchDescription(
@@ -21,7 +21,7 @@ def generate_launch_description():
                 description="YAML configuration file for the MuJoCo UR10e simulation.",
             ),
             Node(
-                package="armsimul_pack",
+                package="mujoco_simulpack",
                 executable="ur10_contact_sim",
                 name="ur10_contact_sim",
                 output="screen",

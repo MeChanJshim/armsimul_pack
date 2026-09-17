@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MuJoCo SimulPack</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101114; --panel:#1b1d22; --line:#353941; --text:#f1f3f5; --muted:#aab0bb; --green:#36c275; --blue:#4ba3ff; --red:#ff6868; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:14px system-ui,sans-serif; }
+    main { width:min(1240px,calc(100vw - 32px)); margin:auto; padding:24px 0; }
+    header { display:flex; justify-content:space-between; align-items:end; gap:16px; margin-bottom:16px; }
+    h1,h2 { margin:0; } h1 { font-size:32px; } h2 { font-size:15px; color:var(--muted); text-transform:uppercase; margin-bottom:12px; }
+    .status { color:var(--muted); } .contact { color:var(--green); font-weight:700; } .contact.active { color:var(--red); }
+    .layout { display:grid; grid-template-columns:340px 1fr; gap:14px; } section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:14px; }
+    .settings-layout { grid-template-columns:minmax(0,1fr); }
+    .settings-card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:14px; }
+    .settings-card > summary { cursor:pointer; color:var(--muted); font-size:15px; font-weight:700; text-transform:uppercase; }
+    .settings-card[open] > summary { margin-bottom:12px; }
+    .settings-card[open] { display:grid; grid-template-columns:repeat(2,minmax(280px,1fr)); column-gap:18px; }
+    .settings-card[open] > summary, .settings-card[open] > .action-row, .settings-card[open] > #joints { grid-column:1/-1; }
+    .contact-group { grid-column:1/-1; border-top:1px solid var(--line); padding-top:12px; margin-top:4px; display:grid; grid-template-columns:repeat(2,minmax(280px,1fr)); column-gap:18px; }
+    .contact-group:first-of-type { border-top:0; padding-top:0; margin-top:0; }
+    .contact-group h3 { grid-column:1/-1; margin:0 0 8px; color:var(--muted); font-size:13px; text-transform:uppercase; }
+    .field { display:grid; grid-template-columns:1fr 140px; align-items:center; gap:8px; margin:8px 0; } label { color:var(--muted); } input,select,button { min-height:34px; border:1px solid var(--line); border-radius:6px; background:#22252b; color:var(--text); padding:6px 9px; font:inherit; } button { cursor:pointer; font-weight:700; } button:hover { border-color:var(--blue); } .primary { color:var(--blue); }
+    .action-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .feedback { color:var(--green); font-size:13px; } .feedback.error { color:var(--red); }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; } canvas { width:100%; height:260px; background:#14161a; border:1px solid var(--line); border-radius:6px; }
+    .readout { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; } .readout div { padding:10px; background:#22252b; border-radius:6px; } .readout b { display:block; font-size:18px; margin-top:3px; }
+    .node { border-top:1px solid var(--line); padding:10px 0; } .node:first-child { border-top:0; padding-top:0; }
+    .node-head { display:flex; justify-content:space-between; gap:8px; align-items:center; } .node-name { font-weight:700; }
+    .node-actions { display:flex; gap:6px; } .node-actions button { min-height:30px; padding:4px 10px; font-size:12px; } .running { color:var(--green); } .stopped { color:var(--muted); }
+    pre { max-height:120px; overflow:auto; white-space:pre-wrap; color:var(--muted); font-size:11px; margin:8px 0 0; }
+    @media (max-width:800px) { header,.layout { display:block; } .settings-card[open], .contact-group { grid-template-columns:1fr; } .field { grid-template-columns:1fr 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <header><div><h1>MuJoCo SimulPack</h1><div class="status" id="status">Connecting...</div></div><div id="contact" class="contact">NO CONTACT</div></header>
+  <div class="layout settings-layout">
+    <div>
+      <section><h2>Simulator Nodes</h2><div id="nodes">Loading...</div></section>
+      <details class="settings-card"><summary>Controller</summary>
+        <div class="field"><label>Control mode</label><select id="control_mode"><option value="position_pd">Position PD</option><option value="inverse_dynamics_accel">Inverse dynamics accel</option></select></div>
+        <div class="field"><label>Simulation rate (Hz)</label><input id="simulation_rate_hz" type="number" step="1" min="1" value="1000"></div>
+        <div class="field"><label>Publish rate (Hz)</label><input id="publish_rate_hz" type="number" step="1" min="1" value="1000"></div>
+        <div class="field"><label>Natural frequency (Hz/joint)</label><input id="natural_frequency" value="6,6,6,8,8,8"></div>
+        <div class="field"><label>Damping ratio (-/joint)</label><input id="damping_ratio" value="1,1,1,1,1,1"></div>
+        <div class="field"><label>Acceleration limit (rad/s²)</label><input id="accel_limit" value="80,80,80,120,120,120"></div>
+        <div class="field"><label>Torque limit (N·m/joint)</label><input id="torque_limit" value="330,330,150,56,56,56"></div>
+        <div class="action-row"><button class="primary" id="applyController">Apply controller</button><span class="feedback" id="controllerFeedback"></span></div>
+      </details>
+      <details class="settings-card"><summary>Contact Model</summary>
+        <div class="contact-group"><h3>Detector</h3>
+          <div class="field"><label>Contact detector</label><select id="contact_detection_enabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></div>
+          <div class="field"><label>Contact bodies</label><input id="ee_body_names" value="wrist_3_link"></div>
+          <div class="field"><label>Force deadband (N)</label><input id="contact_force_deadband" type="number" step="0.001" min="0" value="0.01"></div>
+          <div class="field"><label>Sensor Fx direction</label><select id="force_axis_sign_x"><option value="1">+X</option><option value="-1">-X</option></select></div>
+          <div class="field"><label>Sensor Fy direction</label><select id="force_axis_sign_y"><option value="1">+Y</option><option value="-1">-Y</option></select></div>
+          <div class="field"><label>Sensor Fz direction</label><select id="force_axis_sign_z"><option value="1">+Z</option><option value="-1">-Z</option></select></div>
+        </div>
+        <div class="contact-group"><h3>Contact Solver</h3>
+          <div class="field"><label>solimp d_min (-)</label><input id="solimp_dmin" type="number" step="0.001" value="0.9"></div>
+          <div class="field"><label>solimp d_max (-)</label><input id="solimp_dmax" type="number" step="0.001" value="0.95"></div>
+          <div class="field"><label>solimp width (-)</label><input id="solimp_width" type="number" step="0.001" value="0.001"></div>
+          <div class="field"><label>solimp midpoint (-)</label><input id="solimp_midpoint" type="number" step="0.001" value="0.5"></div>
+          <div class="field"><label>solimp power (-)</label><input id="solimp_power" type="number" step="0.1" value="2"></div>
+          <div class="field"><label>solref T_s (s)</label><input id="solref_ts" type="number" step="0.001" value="0.02"></div>
+          <div class="field"><label>solref zeta (-)</label><input id="solref_zeta" type="number" step="0.01" value="1"></div>
+        </div>
+        <div class="contact-group"><h3>Friction</h3>
+          <div class="field"><label>Friction sliding (-)</label><input id="friction_sliding" type="number" step="0.001" min="0" value="1"></div>
+          <div class="field"><label>Friction torsional (-)</label><input id="friction_torsional" type="number" step="0.001" min="0" value="0.1"></div>
+          <div class="field"><label>Friction rolling (-)</label><input id="friction_rolling" type="number" step="0.001" min="0" value="0.001"></div>
+          <div class="field"><label>Contact condim (-)</label><select id="condim"><option value="1">1 - normal</option><option value="3">3 - normal + tangent</option><option value="4" selected>4 - normal + tangent + torsion</option><option value="6">6 - full friction</option></select></div>
+        </div>
+        <div class="action-row"><button class="primary" id="applyContact">Apply contact model</button><span class="feedback" id="contactFeedback"></span></div>
+      </details>
+      <details class="settings-card"><summary>Joint Parameters</summary><div id="joints"></div><div class="action-row"><button class="primary" id="applyJoints">Apply joint limits</button><span class="feedback" id="jointFeedback"></span></div></details>
+      <section><h2>Settings Profiles</h2>
+        <div class="field"><label>Profile name</label><input id="profileName" placeholder="default_inverse_dynamics"></div>
+        <div class="field"><label>Saved profiles</label><select id="profileList"><option value="">Select profile</option></select></div>
+        <div class="action-row"><button class="primary" id="saveProfile">Save settings</button><span class="feedback" id="saveFeedback"></span></div>
+        <div class="action-row"><button id="loadProfile">Load settings</button><span class="feedback" id="loadFeedback"></span></div>
+        <button id="browseProfile">Browse file</button>
+        <button id="exportProfile">Export current</button>
+        <input id="importSettings" type="file" accept=".json,application/json" hidden>
+      </section>
+      <section><h2>Data</h2><button id="clear">Clear plot history</button><button id="download">Download CSV</button></section>
+    </div>
+  </div>
+  <section class="monitoring"><h2>Monitoring</h2>
+    <div class="readout"><div>Contact<b id="contactValue">false</b></div><div>Force norm<b id="forceValue">0.00 N</b></div><div>Samples<b id="sampleValue">0</b></div></div>
+    <div class="grid"><section><h2>Joint position</h2><canvas id="position"></canvas></section><section><h2>Joint effort</h2><canvas id="effort"></canvas></section><section><h2>Contact force</h2><canvas id="force"></canvas></section><section><h2>Contact state</h2><canvas id="contactPlot"></canvas></section></div>
+  </section>
+</main>
+<script>
+const colors=['#4ba3ff','#36c275','#f2b84b','#ff6868','#c58cff','#66d9ef']; let data={samples:[],joint:{name:[]}}; const openLogs={};
+const $=id=>document.getElementById(id); const value=id=>$(id).value;
+function draw(id,key,labels){const c=$(id),r=c.getBoundingClientRect(),dpr=devicePixelRatio||1;c.width=r.width*dpr;c.height=r.height*dpr;const x=c.getContext('2d');x.scale(dpr,dpr);x.clearRect(0,0,r.width,r.height);const s=data.samples;if(!s.length)return;const series=labels.map((_,i)=>s.map(v=>key==='force'?v.force[i]||0:key==='contact'?(v.contact?1:0):v[key]?.[i]||0));const all=series.flat(),min=key==='contact'?0:Math.min(...all),max=key==='contact'?1:Math.max(...all, min+1e-6);x.strokeStyle='#353941';x.strokeRect(0,0,r.width,r.height);series.forEach((a,i)=>{x.strokeStyle=colors[i%colors.length];x.beginPath();a.forEach((v,j)=>{const px=j/(Math.max(a.length-1,1))*r.width,py=r.height-(v-min)/(max-min)*r.height;j?x.lineTo(px,py):x.moveTo(px,py)});x.stroke()})}
+function render(){const s=data.samples,j=data.joint||{};$('sampleValue').textContent=s.length;$('contactValue').textContent=data.contact?'true':'false';$('contact').textContent=data.contact?'CONTACT':'NO CONTACT';$('contact').classList.toggle('active',data.contact);const f=data.wrench?.force||[0,0,0];$('forceValue').textContent=Math.hypot(...f).toFixed(2)+' N';draw('position','position',j.name||[0,1,2,3,4,5]);draw('effort','effort',j.name||[0,1,2,3,4,5]);draw('force','force',['x','y','z']);draw('contactPlot','contact',['contact'])}
+async function refresh(){try{const r=await fetch('/api/data');data=await r.json();$('status').textContent='Connected to /armsimul topics';render()}catch(e){$('status').textContent='GUI server unavailable'}}
+async function refreshNodes(){try{const scrollY=window.scrollY;const r=await fetch('/api/processes');const d=await r.json();$('nodes').innerHTML=d.processes.map(p=>`<div class="node"><div class="node-head"><span class="node-name">${p.name}</span><span class="${p.running?'running':'stopped'}">${p.running?'Running '+p.pid:'Stopped'}</span></div><div class="status">${p.command}</div><div class="node-actions"><button ${p.running?'disabled':''} onclick="nodeAction('${p.id}','start')">Start</button><button ${p.running?'':'disabled'} onclick="nodeAction('${p.id}','stop')">Stop</button></div><details data-process-id="${p.id}" ${openLogs[p.id]?'open':''}><summary>Recent log</summary><pre>${(p.log||[]).join('\n')}</pre></details></div>`).join('');document.querySelectorAll('#nodes details').forEach(details=>details.addEventListener('toggle',()=>{openLogs[details.dataset.processId]=details.open}));requestAnimationFrame(()=>window.scrollTo(0,scrollY))}catch(e){$('nodes').textContent=e.message}}
+async function nodeAction(id,action){const r=await fetch('/api/process/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});const d=await r.json();if(!d.ok)alert(d.error);await refreshNodes()}
+async function apply(parameters){const r=await fetch('/api/parameters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({parameters})});const d=await r.json();$('status').textContent=d.ok?'Parameters applied':d.error;return d.ok}
+const arrayValue=id=>value(id).split(',').map(Number);
+function settingsValues(){return {control_mode:value('control_mode'),simulation_rate_hz:Number(value('simulation_rate_hz')),publish_rate_hz:Number(value('publish_rate_hz')),contact_force_deadband:Number(value('contact_force_deadband')),contact_detection_enabled:value('contact_detection_enabled')==='true',ee_body_names:value('ee_body_names').split(',').map(v=>v.trim()).filter(Boolean),force_axis_sign:['force_axis_sign_x','force_axis_sign_y','force_axis_sign_z'].map(id=>Number(value(id))),solimp:['solimp_dmin','solimp_dmax','solimp_width','solimp_midpoint','solimp_power'].map(id=>Number(value(id))),solref:['solref_ts','solref_zeta'].map(id=>Number(value(id))),friction:['friction_sliding','friction_torsional','friction_rolling'].map(id=>Number(value(id))),condim:Number(value('condim')),accel_natural_frequency_hz:arrayValue('natural_frequency'),accel_damping_ratio:arrayValue('damping_ratio'),accel_limit:arrayValue('accel_limit'),torque_limit:arrayValue('torque_limit'),position_limits_lower:JSON.parse('['+value('lower')+']'),position_limits_upper:JSON.parse('['+value('upper')+']')}}
+function contactValues(){const all=settingsValues();return {contact_force_deadband:all.contact_force_deadband,contact_detection_enabled:all.contact_detection_enabled,ee_body_names:all.ee_body_names,force_axis_sign:all.force_axis_sign,solimp:all.solimp,solref:all.solref,friction:all.friction,condim:all.condim}}
+function controllerValues(){const all=settingsValues();return {control_mode:all.control_mode,simulation_rate_hz:all.simulation_rate_hz,publish_rate_hz:all.publish_rate_hz,accel_natural_frequency_hz:all.accel_natural_frequency_hz,accel_damping_ratio:all.accel_damping_ratio,accel_limit:all.accel_limit,torque_limit:all.torque_limit}}
+$('applyController').onclick=async()=>{$('controllerFeedback').textContent='Applying...';$('controllerFeedback').classList.remove('error');const ok=await apply(controllerValues());$('controllerFeedback').textContent=ok?'Applied':'Failed';if(!ok)$('controllerFeedback').classList.add('error')}; $('applyContact').onclick=async()=>{$('contactFeedback').textContent='Applying...';$('contactFeedback').classList.remove('error');const ok=await apply(contactValues());$('contactFeedback').textContent=ok?'Applied':'Failed';if(!ok)$('contactFeedback').classList.add('error')}; $('applyJoints').onclick=async()=>{$('jointFeedback').textContent='Applying...';$('jointFeedback').classList.remove('error');const ok=await apply({position_limits_lower:JSON.parse('['+value('lower')+']'),position_limits_upper:JSON.parse('['+value('upper')+']')});$('jointFeedback').textContent=ok?'Applied':'Failed';if(!ok)$('jointFeedback').classList.add('error')};
+function putSettings(values){$('control_mode').value=values.control_mode||'position_pd';['simulation_rate_hz','publish_rate_hz','contact_force_deadband'].forEach(id=>{if(values[id]!==undefined)$(id).value=values[id]});if(values.contact_detection_enabled!==undefined)$('contact_detection_enabled').value=String(values.contact_detection_enabled);if(values.ee_body_names)$('ee_body_names').value=values.ee_body_names.join(',');if(values.force_axis_sign)['force_axis_sign_x','force_axis_sign_y','force_axis_sign_z'].forEach((id,index)=>$(id).value=values.force_axis_sign[index]);if(values.solimp)['solimp_dmin','solimp_dmax','solimp_width','solimp_midpoint','solimp_power'].forEach((id,index)=>$(id).value=values.solimp[index]);if(values.solref)['solref_ts','solref_zeta'].forEach((id,index)=>$(id).value=values.solref[index]);if(values.friction)['friction_sliding','friction_torsional','friction_rolling'].forEach((id,index)=>$(id).value=values.friction[index]);if(values.condim!==undefined)$('condim').value=values.condim;[['natural_frequency','accel_natural_frequency_hz'],['damping_ratio','accel_damping_ratio'],['accel_limit','accel_limit'],['torque_limit','torque_limit'],['lower','position_limits_lower'],['upper','position_limits_upper']].forEach(([id,key])=>{if(values[key])$(id).value=values[key].join(',')})}
+async function refreshProfiles(){const r=await fetch('/api/settings');const d=await r.json();$('profileList').innerHTML='<option value="">Select profile</option>'+(d.settings||[]).map(name=>`<option>${name}</option>`).join('')}
+$('saveProfile').onclick=async()=>{const name=value('profileName').trim();if(!name){$('saveFeedback').textContent='Enter a name';$('saveFeedback').classList.add('error');return}$('saveFeedback').textContent='Saving...';$('saveFeedback').classList.remove('error');const values=settingsValues();const r=await fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,values})});const d=await r.json();if(!d.ok){$('saveFeedback').textContent='Failed';$('saveFeedback').classList.add('error');$('status').textContent=d.error;return}const applied=await apply(values);$('saveFeedback').textContent=applied?'Saved and applied':'Saved, apply failed';if(!applied)$('saveFeedback').classList.add('error');await refreshProfiles()};
+$('loadProfile').onclick=async()=>{const name=value('profileList');if(!name){$('loadFeedback').textContent='Select a profile';$('loadFeedback').classList.add('error');return}const r=await fetch('/api/settings/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});const d=await r.json();if(d.ok){putSettings(d.values);$('profileName').value=name;$('loadFeedback').textContent='Loaded';$('loadFeedback').classList.remove('error');$('status').textContent=`Loaded profile: ${name}`}else{$('loadFeedback').textContent='Failed';$('loadFeedback').classList.add('error');$('status').textContent=d.error}};
+function importSettingsFile(file){if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const values=JSON.parse(reader.result);putSettings(values);$('profileName').value=file.name.replace(/\.json$/i,'');$('status').textContent=`Imported file: ${file.name}`}catch(error){$('status').textContent=`Invalid settings file: ${error.message}`}};reader.readAsText(file)}
+$('browseProfile').onclick=async()=>{try{if(window.showOpenFilePicker){const [handle]=await window.showOpenFilePicker({startIn:'downloads',multiple:false,types:[{description:'MuJoCo settings JSON',accept:{'application/json':['.json']}}]});importSettingsFile(await handle.getFile())}else $('importSettings').click()}catch(error){if(error.name!=='AbortError')$('status').textContent=error.message}};
+$('importSettings').onchange=()=>importSettingsFile($('importSettings').files[0]);
+$('exportProfile').onclick=async()=>{const name=value('profileName').trim()||'mujoco_settings';const content=JSON.stringify(settingsValues(),null,2);try{if(window.showSaveFilePicker){const handle=await window.showSaveFilePicker({suggestedName:`${name}.json`,startIn:'downloads',types:[{description:'MuJoCo settings JSON',accept:{'application/json':['.json']}}]});const writer=await handle.createWritable();await writer.write(content);await writer.close();$('status').textContent=`Exported: ${name}.json`}else{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type:'application/json'}));a.download=`${name}.json`;a.click();URL.revokeObjectURL(a.href)}}catch(error){if(error.name!=='AbortError')$('status').textContent=error.message}};
+$('clear').onclick=()=>{data.samples=[];render()}; $('download').onclick=()=>{const rows=data.samples.map(s=>[s.t,...s.position,...s.effort,...s.force,s.force_norm,s.contact]);const csv=rows.map(r=>r.join(',')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv]));a.download='mujoco_response.csv';a.click()};
+function setup(){const names=data.joint?.name?.length?data.joint.name:['shoulder_pan','shoulder_lift','elbow','wrist_1','wrist_2','wrist_3'];$('joints').innerHTML='<div class="field"><label>Lower limits (rad)</label><input id="lower" value="-6.2831,-6.2831,-3.1415,-6.2831,-6.2831,-6.2831"></div><div class="field"><label>Upper limits (rad)</label><input id="upper" value="6.2831,6.2831,3.1415,6.2831,6.2831,6.2831"></div>';}
+setup();refreshProfiles();setInterval(refresh,250);setInterval(refreshNodes,1000);refresh();refreshNodes();addEventListener('resize',render);
+</script>
+</body>
+</html>
