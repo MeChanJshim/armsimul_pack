@@ -34,6 +34,8 @@ class MuJoCoGui(Node):
         self.lock = threading.Lock()
         # Keep enough history for the browser to select a useful plot duration.
         self.samples = deque(maxlen=60000)
+        self.monitor_sample_period = 0.05
+        self.last_sample_time = 0.0
         self.last_joint = {"name": [], "position": [], "velocity": [], "effort": []}
         self.last_wrench = {"force": [0.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.0]}
         self.last_contact = False
@@ -78,17 +80,20 @@ class MuJoCoGui(Node):
                 "force": [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
                 "torque": [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
             }
-            self._record_sample()
 
     def on_contact(self, msg):
         with self.lock:
             self.last_contact = bool(msg.data)
 
     def _record_sample(self):
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self.last_sample_time < self.monitor_sample_period:
+            return
+        self.last_sample_time = now
         position = self.last_joint.get("position", [])
         force = self.last_wrench["force"]
         self.samples.append({
-            "t": self.get_clock().now().nanoseconds / 1e9,
+            "t": now,
             "position": position,
             "effort": self.last_joint.get("effort", []),
             "force": force,
@@ -128,7 +133,7 @@ class MuJoCoGui(Node):
                             "joint": node.last_joint,
                             "wrench": node.last_wrench,
                             "contact": node.last_contact,
-                            "samples": list(node.samples),
+                            "samples": list(node.samples)[-6000:],
                             "sample_capacity": node.samples.maxlen,
                         })
                     return
