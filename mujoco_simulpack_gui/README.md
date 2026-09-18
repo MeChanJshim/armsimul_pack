@@ -56,6 +56,26 @@ The sensor direction selectors multiply the published force vector by
 selecting `-Z` changes a measured `Fz=-10 N` into `Fz=+10 N` for downstream
 force control. The physical MuJoCo contact direction is unchanged.
 
+If contact behavior is abnormal, first check for duplicate simulator or
+controller nodes:
+
+```bash
+ros2 node list
+pgrep -af 'ur10_contact_sim'
+pgrep -af 'mujoco_simulpack_gui'
+```
+
+After verifying the unwanted PID, stop it with:
+
+```bash
+kill -9 PID
+```
+
+If there are no duplicate nodes and contact is still behaving unexpectedly,
+return to the Contact Model section and press **Apply contact model** again.
+This reapplies the current `solimp`, `solref`, friction, `condim`, and sensor
+force-direction values to the running simulator.
+
 ## Related Topics
 
 The GUI monitors:
