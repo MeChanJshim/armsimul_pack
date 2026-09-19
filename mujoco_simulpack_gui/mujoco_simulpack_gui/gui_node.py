@@ -8,8 +8,9 @@ import threading
 from collections import deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
+import yaml
 import rclpy
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from geometry_msgs.msg import WrenchStamped
@@ -38,6 +39,7 @@ class MuJoCoGui(Node):
         self.last_sample_time = 0.0
         self.last_joint = {"name": [], "position": [], "velocity": [], "effort": []}
         self.last_wrench = {"force": [0.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.0]}
+        self.sensor_wrench_seen = False
         self.last_contact = False
         self.parameter_client = self.create_client(
             SetParameters, f"{self.simulator_node}/set_parameters")
@@ -48,19 +50,35 @@ class MuJoCoGui(Node):
                 "name": "MuJoCo Simulator",
                 "command": ["ros2", "launch", "mujoco_simulpack", "ur10_contact_sim.launch.py"],
                 "process": None, "returncode": None, "log": deque(maxlen=80),
+                "config_path": None,
             },
             "joint_demo": {
                 "name": "Joint Position Demo",
                 "command": ["ros2", "run", "mujoco_simulpack", "realtime_joint_position_demo"],
                 "process": None, "returncode": None, "log": deque(maxlen=80),
+                "config_path": None,
             },
         }
         self.create_subscription(JointState, "/armsimul/joint_states", self.on_joint, 10)
         self.create_subscription(WrenchStamped, "/armsimul/ee_wrench", self.on_wrench, 10)
+        self.create_subscription(
+            WrenchStamped, "/armsimul/ft_sensor_wrench", self.on_sensor_wrench, 10
+        )
         self.create_subscription(Bool, "/armsimul/contact_state", self.on_contact, 10)
         self.web_dir = Path(get_package_share_directory("mujoco_simulpack_gui")) / "web"
-        self.settings_dir = Path.home() / ".ros" / "mujoco_simulpack_gui" / "settings"
+        default_config = (Path(get_package_share_directory("mujoco_simulpack")) / "config" / "ur10_contact_sim.yaml").resolve()
+        self.settings_dir = Path(self.declare_parameter("profiles_directory", str(default_config.parent / "profiles")).value).expanduser().resolve()
         self.settings_dir.mkdir(parents=True, exist_ok=True)
+        # Copy legacy profiles into the new format without deleting their originals.
+        legacy_dir = Path.home() / ".ros" / "mujoco_simulpack_gui" / "settings"
+        for legacy in legacy_dir.glob("*.json"):
+            try:
+                if not self._settings_path(legacy.stem).exists():
+                    self.save_settings(legacy.stem, json.loads(legacy.read_text(encoding="utf-8")))
+            except Exception as exc:
+                self.get_logger().warn(f"Could not migrate {legacy.name}: {exc}")
+        self.pending_config_path = None
+        self.pending_profile_name = None
         self.server = None
         self.server_thread = None
 
@@ -76,6 +94,16 @@ class MuJoCoGui(Node):
 
     def on_wrench(self, msg):
         with self.lock:
+            if self.sensor_wrench_seen:
+                return
+            self.last_wrench = {
+                "force": [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
+                "torque": [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
+            }
+
+    def on_sensor_wrench(self, msg):
+        with self.lock:
+            self.sensor_wrench_seen = True
             self.last_wrench = {
                 "force": [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
                 "torque": [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
@@ -140,8 +168,22 @@ class MuJoCoGui(Node):
                 if urlparse(self.path).path == "/api/processes":
                     self.send_json({"ok": True, "processes": node.process_status()})
                     return
+                if urlparse(self.path).path == "/api/settings/folders":
+                    try:
+                        directory = parse_qs(urlparse(self.path).query).get("directory", [None])[0]
+                        folder = node.profile_directory(directory)
+                        children = sorted((p for p in folder.iterdir() if p.is_dir() and not p.name.startswith(".")), key=lambda p: p.name.lower())
+                        self.send_json({"ok": True, "directory": str(folder), "parent": str(folder.parent), "default_directory": str(node.settings_dir), "folders": [{"name": p.name, "path": str(p)} for p in children]})
+                    except Exception as exc:
+                        self.send_json({"ok": False, "error": str(exc)}, 400)
+                    return
                 if urlparse(self.path).path == "/api/settings":
-                    self.send_json({"ok": True, "settings": node.list_settings()})
+                    try:
+                        directory = parse_qs(urlparse(self.path).query).get("directory", [None])[0]
+                        folder = node.profile_directory(directory)
+                        self.send_json({"ok": True, "settings": node.list_settings(folder), "directory": str(folder)})
+                    except Exception as exc:
+                        self.send_json({"ok": False, "error": str(exc)}, 400)
                     return
                 super().do_GET()
 
@@ -161,17 +203,33 @@ class MuJoCoGui(Node):
                     except Exception as exc:  # noqa: BLE001
                         self.send_json({"ok": False, "error": str(exc)}, 400)
                     return
+                if path == "/api/settings/import":
+                    try:
+                        document = yaml.safe_load(self.read_json().get("text", ""))
+                        if not isinstance(document, dict) or not document:
+                            raise ValueError("Expected a YAML or legacy JSON settings object")
+                        values = document
+                        for key in ("/ur10_contact_sim", "ur10_contact_sim", "/**"):
+                            if key in document:
+                                values = document[key].get("ros__parameters")
+                                break
+                        if not isinstance(values, dict) or not values or "control_mode" not in values:
+                            raise ValueError("The file does not contain a Simulpack settings profile")
+                        self.send_json({"ok": True, "values": values})
+                    except Exception as exc:
+                        self.send_json({"ok": False, "error": str(exc)}, 400)
+                    return
                 if path == "/api/settings/save":
                     try:
                         payload = self.read_json()
-                        self.send_json(node.save_settings(payload.get("name", ""), payload.get("values", {})))
+                        self.send_json(node.save_settings(payload.get("name", ""), payload.get("values", {}), payload.get("directory")))
                     except Exception as exc:  # noqa: BLE001
                         self.send_json({"ok": False, "error": str(exc)}, 400)
                     return
                 if path == "/api/settings/load":
                     try:
                         payload = self.read_json()
-                        self.send_json(node.load_settings(payload.get("name", "")))
+                        self.send_json(node.load_settings(payload.get("name", ""), payload.get("directory")))
                     except Exception as exc:  # noqa: BLE001
                         self.send_json({"ok": False, "error": str(exc)}, 400)
                     return
@@ -204,35 +262,101 @@ class MuJoCoGui(Node):
         future = self.parameter_client.call_async(request)
         completed = threading.Event()
         future.add_done_callback(lambda _future: completed.set())
-        if not completed.wait(timeout=2.0):
-            return {"ok": False, "error": "Parameter update timed out"}
-        results = future.result().results
+        if not completed.wait(timeout=15.0):
+            return {"ok": False, "error": "Parameter update timed out after 15 seconds"}
+        try:
+            results = future.result().results
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"Parameter update failed: {exc}"}
         errors = [result.reason for result in results if not result.successful]
         if errors:
             return {"ok": False, "error": "; ".join(errors)}
         return {"ok": True, "parameters": list(values)}
 
-    def _settings_path(self, name):
+    def profile_directory(self, directory=None):
+        return Path(directory).expanduser().resolve() if directory else self.settings_dir
+
+    def _settings_path(self, name, directory=None):
         safe_name = str(name).strip()
+        if safe_name.endswith((".yaml", ".yml")):
+            safe_name = str(Path(safe_name).with_suffix(""))
         if not safe_name or safe_name in {".", ".."} or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- " for char in safe_name):
-            raise ValueError("Settings name may contain only letters, numbers, spaces, _ and -")
-        return self.settings_dir / f"{safe_name}.json"
+            raise ValueError("Use letters, numbers, spaces, _ or - for the YAML filename")
+        return self.profile_directory(directory) / f"{safe_name}.yaml"
 
-    def list_settings(self):
-        return sorted(path.stem for path in self.settings_dir.glob("*.json"))
+    def list_settings(self, directory=None):
+        return sorted(path.name for path in self.profile_directory(directory).glob("*.yaml"))
 
-    def save_settings(self, name, values):
+    def save_settings(self, name, values, directory=None):
         if not isinstance(values, dict) or not values:
             raise ValueError("No settings were supplied")
-        path = self._settings_path(name)
-        path.write_text(json.dumps(values, indent=2), encoding="utf-8")
-        return {"ok": True, "name": path.stem, "settings": self.list_settings()}
+        path = self._settings_path(name, directory)
+        document = self._profile_document(values)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        self.pending_config_path = path
+        self.pending_profile_name = path.stem
+        return {"ok": True, "name": path.name, "path": str(path), "directory": str(path.parent), "settings": self.list_settings(path.parent), "staged": True}
 
-    def load_settings(self, name):
-        path = self._settings_path(name)
+    def load_settings(self, name, directory=None):
+        path = self._settings_path(name, directory)
         if not path.exists():
-            raise ValueError(f"Settings profile not found: {name}")
-        return {"ok": True, "name": path.stem, "values": json.loads(path.read_text(encoding="utf-8"))}
+            raise ValueError(f"Settings profile not found: {path}")
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError("Expected a ROS parameter YAML profile")
+        node_values = document.get("/ur10_contact_sim", document.get("ur10_contact_sim", document.get("/**", {})))
+        values = node_values.get("ros__parameters") if isinstance(node_values, dict) else None
+        if not isinstance(values, dict) or not values:
+            raise ValueError("YAML must contain ur10_contact_sim / ros__parameters")
+        self._profile_document(values)  # Validate without rewriting the selected file.
+        self.pending_config_path = path
+        self.pending_profile_name = path.stem
+        return {"ok": True, "name": path.name, "path": str(path), "values": values, "staged": True}
+
+    def _profile_document(self, values):
+        """Return the ROS parameter document used for both saving and launching."""
+        double_parameters = {
+            "simulation_rate_hz", "publish_rate_hz", "contact_force_deadband",
+        }
+        ros_values = {
+            key: float(value) if key in double_parameters else (
+                [float(item) for item in value]
+                if isinstance(value, list)
+                and value
+                and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value)
+                else value
+            )
+            for key, value in values.items()
+        }
+        default_path = Path(get_package_share_directory("mujoco_simulpack")) / "config" / "ur10_contact_sim.yaml"
+        if default_path.exists():
+            default_document = yaml.safe_load(default_path.read_text(encoding="utf-8")) or {}
+            default_node = default_document.get("ur10_contact_sim", {})
+            default_values = default_node.get("ros__parameters", {})
+            known_parameters = set(default_values) | {
+                "contact_detection_enabled", "solimp", "solref", "friction", "condim",
+                "accel_natural_frequency_hz", "accel_damping_ratio", "accel_limit", "torque_limit",
+            }
+            ros_values = {key: value for key, value in ros_values.items() if key in known_parameters}
+            merged_values = dict(default_values)
+            merged_values.update(ros_values)
+            ros_values = merged_values
+        ros_values = {
+            key: float(value) if key in double_parameters else (
+                [float(item) for item in value]
+                if isinstance(value, list)
+                and value
+                and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value)
+                else value
+            )
+            for key, value in ros_values.items()
+        }
+        # A launch profile is intended to start the interactive simulator.
+        # Keep the viewer enabled unless a future GUI control explicitly changes it.
+        ros_values.setdefault("use_viewer", True)
+        parameter_file = {"/ur10_contact_sim": {"ros__parameters": ros_values}}
+        return parameter_file
 
     def process_status(self):
         with self.process_lock:
@@ -259,13 +383,22 @@ class MuJoCoGui(Node):
             if spec is None:
                 raise ValueError(f"Unknown process: {process_id}")
             if spec["process"] is not None and spec["process"].poll() is None:
-                return {"ok": True, "processes": self.process_status()}
+                config_changed = (
+                    process_id == "mujoco_simulator"
+                    and str(spec.get("config_path")) != str(self.pending_config_path)
+                )
+                if not config_changed:
+                    return {"ok": True, "processes": self.process_status()}
+                self.stop_process(process_id)
             spec["log"].clear()
             spec["returncode"] = None
+            command = list(spec["command"])
+            if process_id == "mujoco_simulator" and self.pending_config_path is not None:
+                command.append(f"config_file:={self.pending_config_path}")
             script = (
                 f"source /opt/ros/{shlex.quote(os.environ.get('ROS_DISTRO', 'humble'))}/setup.bash && "
                 f"source {shlex.quote(str(self.workspace_setup))} && "
-                f"exec {shlex.join(spec['command'])}"
+                f"exec {shlex.join(command)}"
             )
             env = os.environ.copy()
             for variable in ("AMENT_PREFIX_PATH", "COLCON_PREFIX_PATH", "CMAKE_PREFIX_PATH"):
@@ -276,6 +409,7 @@ class MuJoCoGui(Node):
                 bufsize=1, start_new_session=True, env=env,
             )
             spec["process"] = process
+            spec["config_path"] = str(self.pending_config_path) if process_id == "mujoco_simulator" else None
             threading.Thread(target=self._capture_process, args=(process_id, process), daemon=True).start()
             return {"ok": True, "processes": self.process_status()}
 

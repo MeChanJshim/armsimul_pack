@@ -31,9 +31,12 @@ ur10_contact_sim:
     joint_position_array_command_topic: "/armsimul/joint_position_cmd_array"
     joint_trajectory_command_topic: "/joint_trajectory_controller/joint_trajectory"
     ee_wrench_topic: "/armsimul/ee_wrench"
+    ft_sensor_wrench_topic: "/armsimul/ft_sensor_wrench"
+    ft_sensor_wrench_raw_topic: "/armsimul/ft_sensor_wrench_raw"
     contact_state_topic: "/armsimul/contact_state"
     frame_id: "base"
     ee_frame_id: "attachment_site"
-    ee_body_names: ["wrist_3_link"]
+    ft_sensor_site_name: "attachment_site"
+    ee_body_names: ["wrist_3_link", "nrs_spindle"]
     contact_force_deadband: 0.01
     force_axis_sign: [1.0, 1.0, 1.0]

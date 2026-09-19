@@ -13,7 +13,7 @@ setup(
         (f"share/{package_name}/config", glob("config/*.yaml")),
         (f"share/{package_name}/launch", glob("launch/*.launch.py")),
         (f"share/{package_name}/models/ur10e", glob("models/ur10e/*.xml")),
-        (f"share/{package_name}/models/ur10e/assets", glob("models/ur10e/assets/*.obj")),
+        (f"share/{package_name}/models/ur10e/assets", glob("models/ur10e/assets/*")),
     ],
     install_requires=["setuptools", "PyYAML"],
     zip_safe=True,

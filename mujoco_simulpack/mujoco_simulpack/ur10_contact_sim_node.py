@@ -4,7 +4,7 @@ from typing import Dict, Iterable, List
 import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import WrenchStamped
+from geometry_msgs.msg import Wrench, WrenchStamped
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rcl_interfaces.msg import SetParametersResult
@@ -42,6 +42,7 @@ class Ur10ContactSim(Node):
             parameters=[
                 ("model_file", "models/ur10e/ur10e_contact_scene.xml"),
                 ("use_viewer", False),
+                ("viewer_frame_body", ""),
                 ("publish_rate_hz", 100.0),
                 ("simulation_rate_hz", 1000.0),
                 ("control_mode", "position_pd"),
@@ -59,10 +60,13 @@ class Ur10ContactSim(Node):
                 ("joint_position_array_command_topic", "/armsimul/joint_position_cmd_array"),
                 ("joint_trajectory_command_topic", "/joint_trajectory_controller/joint_trajectory"),
                 ("ee_wrench_topic", "/armsimul/ee_wrench"),
+                ("ft_sensor_wrench_topic", "/armsimul/ft_sensor_wrench"),
+                ("ft_sensor_wrench_raw_topic", "/armsimul/ft_sensor_wrench_raw"),
                 ("contact_state_topic", "/armsimul/contact_state"),
                 ("frame_id", "base"),
                 ("ee_frame_id", "attachment_site"),
-                ("ee_body_names", ["wrist_3_link"]),
+                ("ft_sensor_site_name", "attachment_site"),
+                ("ee_body_names", ["wrist_3_link", "nrs_spindle"]),
                 ("contact_force_deadband", 0.01),
                 ("contact_detection_enabled", True),
                 ("force_axis_sign", [1.0, 1.0, 1.0]),
@@ -127,6 +131,14 @@ class Ur10ContactSim(Node):
         self.last_command_time = self.get_clock().now()
         self.frame_id = str(self.get_parameter("frame_id").value)
         self.ee_frame_id = str(self.get_parameter("ee_frame_id").value)
+        self.ft_sensor_site_name = str(self.get_parameter("ft_sensor_site_name").value)
+        try:
+            self.ft_sensor_site_id = self.model.site(self.ft_sensor_site_name).id
+        except Exception as exc:
+            raise ValueError(
+                f"MuJoCo site '{self.ft_sensor_site_name}' was not found; "
+                "set ft_sensor_site_name to a valid sensor site."
+            ) from exc
         self.ee_body_names = set(self.get_parameter("ee_body_names").value)
         self.force_deadband = float(self.get_parameter("contact_force_deadband").value)
         self.contact_detection_enabled = bool(self.get_parameter("contact_detection_enabled").value)
@@ -140,6 +152,12 @@ class Ur10ContactSim(Node):
         )
         self.wrench_pub = self.create_publisher(
             WrenchStamped, str(self.get_parameter("ee_wrench_topic").value), 10
+        )
+        self.ft_sensor_wrench_pub = self.create_publisher(
+            WrenchStamped, str(self.get_parameter("ft_sensor_wrench_topic").value), 10
+        )
+        self.ft_sensor_wrench_raw_pub = self.create_publisher(
+            Wrench, str(self.get_parameter("ft_sensor_wrench_raw_topic").value), 10
         )
         self.contact_pub = self.create_publisher(
             Bool, str(self.get_parameter("contact_state_topic").value), 10
@@ -171,10 +189,25 @@ class Ur10ContactSim(Node):
         self.publish_timer = self.create_timer(1.0 / pub_rate, self._publish_state)
 
         self.viewer = None
+        self.viewer_body_axes_visible = False
         if bool(self.get_parameter("use_viewer").value):
             from mujoco import viewer
 
-            self.viewer = viewer.launch_passive(self.model, self.data)
+            requested_body = str(self.get_parameter("viewer_frame_body").value)
+            candidates = ([requested_body] if requested_body else
+                          list(reversed(self.get_parameter("ee_body_names").value)))
+            self.viewer_frame_body_id = -1
+            for name in candidates:
+                body_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_BODY, name)
+                if body_id >= 0:
+                    self.viewer_frame_body_id = body_id
+                    break
+            if self.viewer_frame_body_id < 0:
+                raise ValueError(f"No viewer frame body found among {candidates}")
+            self.viewer_axis_offsets = self._viewer_axis_surface_offsets()
+            self.viewer = viewer.launch_passive(
+                self.model, self.data, key_callback=self._viewer_key_callback)
+            self._update_viewer_body_axes()
 
         self.get_logger().info(f"Loaded MuJoCo model: {self.model_path}")
         self.get_logger().info(f"Control mode: {self.control_mode}")
@@ -390,7 +423,66 @@ class Ur10ContactSim(Node):
         self.mujoco.mj_step(self.model, self.data)
         self.previous_target_positions = self.target_positions.copy()
         if self.viewer is not None:
+            self._update_viewer_body_axes()
             self.viewer.sync()
+
+    def _viewer_axis_surface_offsets(self) -> np.ndarray:
+        """Place the short axis arrows outside the contact body's solid mesh."""
+        maximum = np.zeros(3)
+        signs = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
+        for geom_id in range(self.model.ngeom):
+            if self.model.geom_bodyid[geom_id] != self.viewer_frame_body_id:
+                continue
+            center, half_size = self.model.geom_aabb[geom_id].reshape(2, 3)
+            rotation = np.empty(9)
+            self.mujoco.mju_quat2Mat(rotation, self.model.geom_quat[geom_id])
+            corners = (center + signs * half_size) @ rotation.reshape(3, 3).T
+            corners += self.model.geom_pos[geom_id]
+            maximum = np.maximum(maximum, corners.max(axis=0))
+        gap = self.model.stat.meansize * self.model.vis.scale.framewidth
+        return maximum + gap
+
+    def _viewer_key_callback(self, keycode: int) -> None:
+        from glfw import KEY_F6
+
+        if keycode == KEY_F6:
+            self.viewer_body_axes_visible = not self.viewer_body_axes_visible
+            self.get_logger().info("Contact body axes: " + ("shown" if self.viewer_body_axes_visible else "hidden"))
+            if self.viewer is not None:
+                self._update_viewer_body_axes()
+
+    def _update_viewer_body_axes(self) -> None:
+        """Draw only the contact body's local frame as visual-only arrows."""
+        with self.viewer.lock():
+            self.viewer.opt.frame = self.mujoco.mjtFrame.mjFRAME_NONE
+            scene = self.viewer.user_scn
+            scene.ngeom = 0
+            if not self.viewer_body_axes_visible:
+                return
+            body_id = self.viewer_frame_body_id
+            origin = self.data.xpos[body_id]
+            rotation = self.data.xmat[body_id].reshape(3, 3)
+            length = self.model.stat.meansize * self.model.vis.scale.framelength
+            width = self.model.stat.meansize * self.model.vis.scale.framewidth
+            colors = ((1.0, 0.15, 0.15, 1.0), (0.15, 1.0, 0.25, 1.0), (0.2, 0.45, 1.0, 1.0))
+            for axis, color in enumerate(colors):
+                if scene.ngeom + 2 > scene.maxgeom:
+                    break
+                # Keep the true body origin and direction; extend a thin stem
+                # through the mesh to a short, visible arrow outside the body.
+                start = origin + self.viewer_axis_offsets[axis] * rotation[:, axis]
+                stem = scene.geoms[scene.ngeom]
+                self.mujoco.mjv_initGeom(stem, self.mujoco.mjtGeom.mjGEOM_LINE,
+                    np.zeros(3), origin, np.eye(3).ravel(), np.array([.6, .6, .6, 1], dtype=np.float32))
+                self.mujoco.mjv_connector(stem, self.mujoco.mjtGeom.mjGEOM_LINE,
+                    1.0, origin, start)
+                scene.ngeom += 1
+                geom = scene.geoms[scene.ngeom]
+                self.mujoco.mjv_initGeom(geom, self.mujoco.mjtGeom.mjGEOM_ARROW,
+                    np.zeros(3), origin, np.eye(3).ravel(), np.asarray(color, dtype=np.float32))
+                self.mujoco.mjv_connector(geom, self.mujoco.mjtGeom.mjGEOM_ARROW,
+                    width, start, start + length * rotation[:, axis])
+                scene.ngeom += 1
 
     def _apply_position_pd_control(self) -> None:
         for index, actuator_id in enumerate(self.actuator_ids):
@@ -449,6 +541,30 @@ class Ur10ContactSim(Node):
         wrench.wrench.torque.z = float(torque[2])
         self.wrench_pub.publish(wrench)
 
+        sensor_force, sensor_torque = self._sum_ft_sensor_wrench()
+        sensor_force *= self.force_axis_sign
+        sensor_wrench = WrenchStamped()
+        sensor_wrench.header.stamp = stamp
+        sensor_wrench.header.frame_id = self.ft_sensor_site_name
+        sensor_wrench.wrench.force.x = float(sensor_force[0])
+        sensor_wrench.wrench.force.y = float(sensor_force[1])
+        sensor_wrench.wrench.force.z = float(sensor_force[2])
+        sensor_wrench.wrench.torque.x = float(sensor_torque[0])
+        sensor_wrench.wrench.torque.y = float(sensor_torque[1])
+        sensor_wrench.wrench.torque.z = float(sensor_torque[2])
+        self.ft_sensor_wrench_pub.publish(sensor_wrench)
+
+        # NRS intrinsic contact sensing consumes geometry_msgs/Wrench rather
+        # than WrenchStamped, so expose the same sensor-frame values directly.
+        raw_wrench = Wrench()
+        raw_wrench.force.x = float(sensor_force[0])
+        raw_wrench.force.y = float(sensor_force[1])
+        raw_wrench.force.z = float(sensor_force[2])
+        raw_wrench.torque.x = float(sensor_torque[0])
+        raw_wrench.torque.y = float(sensor_torque[1])
+        raw_wrench.torque.z = float(sensor_torque[2])
+        self.ft_sensor_wrench_raw_pub.publish(raw_wrench)
+
         contact_state = Bool()
         contact_state.data = bool(np.linalg.norm(force) > self.force_deadband)
         self.contact_pub.publish(contact_state)
@@ -488,6 +604,59 @@ class Ur10ContactSim(Node):
         if np.linalg.norm(total_torque) < self.force_deadband:
             total_torque[:] = 0.0
         return total_force, total_torque
+
+    def _sum_ft_sensor_wrench(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the contact wrench at the configured virtual FT sensor frame.
+
+        MuJoCo reports each contact wrench at the contact point in world
+        coordinates. Shift the torque to the sensor origin with r x F, then
+        rotate both vectors into the sensor site's local coordinates.
+        """
+        world_force = np.zeros(3)
+        world_torque_at_sensor = np.zeros(3)
+
+        if not self.contact_detection_enabled:
+            return world_force, world_torque_at_sensor
+
+        sensor_position = np.asarray(self.data.site_xpos[self.ft_sensor_site_id], dtype=float)
+        sensor_rotation = np.asarray(
+            self.data.site_xmat[self.ft_sensor_site_id], dtype=float
+        ).reshape(3, 3)
+
+        for contact_index in range(self.data.ncon):
+            contact = self.data.contact[contact_index]
+            geom1 = int(contact.geom1)
+            geom2 = int(contact.geom2)
+            body1 = self.body_name_by_geom.get(geom1)
+            body2 = self.body_name_by_geom.get(geom2)
+
+            if body1 not in self.ee_body_names and body2 not in self.ee_body_names:
+                continue
+
+            contact_wrench = np.zeros(6)
+            self.mujoco.mj_contactForce(self.model, self.data, contact_index, contact_wrench)
+            frame = np.asarray(contact.frame, dtype=float).reshape(3, 3)
+            contact_force_world = frame.T @ contact_wrench[:3]
+            contact_torque_world = frame.T @ contact_wrench[3:]
+
+            if body2 in self.ee_body_names:
+                contact_force_world *= -1.0
+                contact_torque_world *= -1.0
+
+            contact_position = np.asarray(contact.pos, dtype=float)
+            world_force += contact_force_world
+            world_torque_at_sensor += contact_torque_world
+            world_torque_at_sensor += np.cross(
+                contact_position - sensor_position, contact_force_world
+            )
+
+        if np.linalg.norm(world_force) < self.force_deadband:
+            world_force[:] = 0.0
+        if np.linalg.norm(world_torque_at_sensor) < self.force_deadband:
+            world_torque_at_sensor[:] = 0.0
+
+        # Site rotation columns are the sensor axes expressed in world frame.
+        return sensor_rotation.T @ world_force, sensor_rotation.T @ world_torque_at_sensor
 
 
 def main(args: List[str] | None = None) -> None:

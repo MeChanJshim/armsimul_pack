@@ -109,6 +109,9 @@ It uses the last point in the received trajectory as the current position target
   six-value joint position command input for real-time controllers.
 - `/armsimul/ee_wrench` (`geometry_msgs/WrenchStamped`): summed contact wrench
   involving the configured EE body names.
+- `/armsimul/ft_sensor_wrench` (`geometry_msgs/WrenchStamped`): the same contact
+  wrench expressed in the configured virtual FT sensor frame. The torque is
+  shifted from each MuJoCo contact point to the sensor origin before rotation.
 - `/armsimul/contact_state` (`std_msgs/Bool`): true when EE contact force is over
   the configured deadband.
 
@@ -127,7 +130,10 @@ Important fields:
 - `joint_position_command_topic`: `sensor_msgs/JointState` position command.
 - `joint_trajectory_command_topic`: `trajectory_msgs/JointTrajectory` command.
 - `ee_body_names`: MuJoCo body names treated as the end-effector for contact
-  force summation. Default is `wrist_3_link`.
+  force summation. The contact scene includes `wrist_3_link` and the attached
+  `nrs_spindle`.
+- `ft_sensor_site_name`: MuJoCo site used as the virtual FT sensor origin and
+  coordinate frame. The default is `attachment_site`.
 - `contact_force_deadband`: small force threshold in newtons.
 - `force_axis_sign`: per-axis sensor sign applied to the published force
   vector, for example `[-1.0, 1.0, 1.0]` flips only the X force direction.
@@ -135,6 +141,10 @@ Important fields:
 The force-axis sign changes the reported `/armsimul/ee_wrench` sensor value and
 does not change the physical contact solution. Use it when the simulator's
 contact-force convention is opposite to the force controller convention.
+
+For contact-point estimation, subscribe to `/armsimul/ft_sensor_wrench`.
+Its `header.frame_id` identifies the configured sensor site, and its torque is
+computed about that site rather than about the individual contact point.
 
 ## Simulator GUI
 
@@ -361,3 +371,9 @@ source install/setup.bash
 - The wrench is computed from MuJoCo contact forces, not from a physical F/T
   sensor driver. For a real robot, bridge your hardware F/T sensor separately
   and keep topic names consistent with this package.
+
+### Contact body axes
+
+The MuJoCo viewer starts with coordinate axes hidden. Press **F6** to toggle only the selected contact body's local XYZ frame (red, green, blue), using the small frame dimensions in the scene XML. The arrows follow the body pose and are visual decorations, so they do not affect collisions. `viewer_frame_body` selects a body explicitly; by default the last existing entry in `ee_body_names` is used (`nrs_spindle` in the spindle model, or `wrist_3_link` in the model without a spindle). F6 toggles this overlay on/off instead of cycling through native all-body frames. Restart the simulator to load this viewer change.
+
+Small contact-body axes are drawn as short colored arrows beyond the body bounds, with thin stems along the same axes from the true body origin. This prevents the spindle mesh from hiding the arrows. F6 logs `Contact body axes: shown/hidden`; visibility does not depend on contact detection.

@@ -41,6 +41,19 @@
     .node-actions { display:flex; gap:6px; } .node-actions button { min-height:30px; padding:4px 10px; font-size:12px; } .running { color:var(--green); } .stopped { color:var(--muted); }
     pre { max-height:120px; overflow:auto; white-space:pre-wrap; color:var(--muted); font-size:11px; margin:8px 0 0; }
     @media (max-width:800px) { header,.layout { display:block; } .settings-card[open], .contact-group { grid-template-columns:1fr; } .field { grid-template-columns:1fr 1fr; } }
+    #folderDialog{width:min(650px,90vw);background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:22px}#folderDialog::backdrop{background:#0009}#folderPath{overflow-wrap:anywhere}#folderList{display:grid;gap:6px;max-height:320px;overflow:auto;margin:14px 0}#folderList button{text-align:left}
+    .profile-folder{display:grid;gap:8px;margin:0 0 16px}.profile-folder small{color:var(--muted)}
+    .profile-intro{color:var(--muted);margin:0 0 16px;line-height:1.6}
+    .profile-workflow{display:grid;gap:6px;background:#172535;border-left:3px solid var(--blue);padding:14px;margin-bottom:16px;line-height:1.6}
+    .profile-workflow small{color:var(--muted)}
+    .profile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+    .profile-group{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
+    .profile-group h3{margin:0;font-size:15px}.profile-group p{margin:0;color:var(--muted);line-height:1.65}
+    .profile-group small{color:var(--muted);line-height:1.5}.profile-group input,.profile-group select{width:100%;min-width:0}
+    .profile-group>button{align-self:flex-start;margin-top:4px}.profile-group .feedback{min-height:20px}
+    .profile-files{grid-column:1/-1}.profile-file-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}
+    .profile-file-actions button{margin-bottom:10px}.profile-note{color:var(--muted);line-height:1.65;margin:14px 0 0;font-size:13px}
+    @media(max-width:800px){.profile-grid,.profile-file-actions{grid-template-columns:minmax(0,1fr)}}
   </style>
 </head>
 <body>
@@ -62,7 +75,7 @@
       <details class="settings-card"><summary>Contact Model</summary>
         <div class="contact-group"><h3>Detector</h3>
           <div class="field"><label>Contact detector</label><select id="contact_detection_enabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></div>
-          <div class="field"><label>Contact bodies</label><input id="ee_body_names" value="wrist_3_link"></div>
+          <div class="field"><label>Contact bodies</label><input id="ee_body_names" value="wrist_3_link,nrs_spindle"></div>
           <div class="field"><label>Force deadband (N)</label><input id="contact_force_deadband" type="number" step="0.001" min="0" value="0.01"></div>
           <div class="field"><label>Sensor Fx direction</label><select id="force_axis_sign_x"><option value="1">+X</option><option value="-1">-X</option></select></div>
           <div class="field"><label>Sensor Fy direction</label><select id="force_axis_sign_y"><option value="1">+Y</option><option value="-1">-Y</option></select></div>
@@ -86,14 +99,39 @@
         <div class="action-row"><button class="primary" id="applyContact">Apply contact model</button><span class="feedback" id="contactFeedback"></span></div>
       </details>
       <details class="settings-card"><summary>Joint Parameters</summary><div id="joints"></div><div class="action-row"><button class="primary" id="applyJoints">Apply joint limits</button><span class="feedback" id="jointFeedback"></span></div></details>
-      <section><h2>Settings Profiles</h2>
-        <div class="field"><label>Profile name</label><input id="profileName" placeholder="default_inverse_dynamics"></div>
-        <div class="field"><label>Saved profiles</label><select id="profileList"><option value="">Select profile</option></select></div>
-        <div class="action-row"><button class="primary" id="saveProfile">Save settings</button><span class="feedback" id="saveFeedback"></span></div>
-        <div class="action-row"><button id="loadProfile">Load settings</button><span class="feedback" id="loadFeedback"></span></div>
-        <button id="browseProfile">Browse file</button>
-        <button id="exportProfile">Export current</button>
-        <input id="importSettings" type="file" accept=".json,application/json" hidden>
+      <section id="settingsProfiles" aria-labelledby="profilesTitle">
+        <h2 id="profilesTitle">Settings Profiles</h2>
+        <p class="profile-intro">Controller · Contact Model · Joint Parameters의 <strong>현재 입력값을 하나의 프로필</strong>로 관리합니다.</p>
+        <div class="profile-workflow"><strong>다음 실행에 적용</strong><span>프로필 저장 또는 불러오기 → Simulator Nodes에서 Stop → Start</span><small>이미 정지되어 있으면 Start만 누르세요. GUI를 다시 실행한 뒤에는 저장된 프로필을 다시 불러와야 합니다.</small></div>
+        <div class="profile-folder"><label for="profileDirectory">저장 폴더</label><div class="action-row"><input id="profileDirectory" readonly aria-label="선택된 저장 폴더" placeholder="기본 폴더 불러오는 중…" style="flex:1;min-width:200px"><button id="refreshProfiles">다른 폴더 선택…</button><button id="defaultProfileDirectory">기본 폴더로</button></div><small>페이지를 열면 mujoco_simulpack/config/profiles/가 자동 선택됩니다.</small></div>
+        <dialog id="folderDialog" aria-labelledby="folderDialogTitle">
+          <h3 id="folderDialogTitle">저장 폴더 선택</h3><p class="status">Simulpack이 실행 중인 컴퓨터의 폴더입니다.</p>
+          <div class="action-row"><button id="folderUp">상위 폴더</button><button id="folderDefault">기본 폴더</button></div>
+          <p id="folderPath"></p><div id="folderList"></div><p id="folderError" class="feedback error" role="status"></p>
+          <div class="action-row"><button class="primary" id="folderConfirm">이 폴더 선택</button><button id="folderCancel">취소</button></div>
+        </dialog>
+        <div class="profile-grid">
+          <div class="profile-group">
+            <h3>1. 현재 설정 저장</h3>
+            <p>화면에 입력한 세 영역의 값을 이 컴퓨터에 저장하고, 다음 시뮬레이터 시작에 사용할 설정으로 준비합니다.</p>
+            <label for="profileName">YAML 파일 이름</label>
+            <input id="profileName" placeholder="예: spindle_contact.yaml" aria-describedby="profileOverwrite">
+            <small id="profileOverwrite">확장자는 .yaml로 자동 지정됩니다. 같은 이름이면 기존 파일을 덮어씁니다.</small>
+            <button class="primary" id="saveProfile">Save settings · 저장</button>
+            <span class="feedback" id="saveFeedback" role="status" aria-live="polite"></span>
+          </div>
+          <div class="profile-group">
+            <h3>2. 저장된 설정 불러오기</h3>
+            <p>저장된 프로필을 입력칸에 채우고, 다음 시뮬레이터 시작에 사용할 설정으로 준비합니다.</p>
+            <label for="profileList">선택한 폴더의 YAML 파일</label>
+            <select id="profileList"><option value="">프로필 선택</option></select>
+            <small>불러오면 현재 입력칸의 값이 선택한 프로필 값으로 바뀝니다.</small>
+            <button class="primary" id="loadProfile">Load settings · 불러오기</button>
+            <span class="feedback" id="loadFeedback" role="status" aria-live="polite"></span>
+          </div>
+        </div>
+        <p class="profile-note"><strong>실행 중 즉시 변경:</strong> 각 설정 영역의 Apply 버튼을 사용하세요. Apply는 프로필을 저장하지 않으며, Save / Load는 실행 중인 시뮬레이터에 즉시 적용하지 않습니다.</p>
+        <p class="profile-note">저장 범위: 세 설정 영역의 입력값. 로봇 현재 자세, 카메라 시점, 플롯 기록, 시편 형상은 포함하지 않습니다.</p>
       </section>
       <section><h2>Data</h2><button id="clear">Clear plot history</button><button id="download">Download CSV</button></section>
     </div>
@@ -134,16 +172,56 @@ function contactValues(){const all=settingsValues();return {contact_force_deadba
 function controllerValues(){const all=settingsValues();return {control_mode:all.control_mode,simulation_rate_hz:all.simulation_rate_hz,publish_rate_hz:all.publish_rate_hz,accel_natural_frequency_hz:all.accel_natural_frequency_hz,accel_damping_ratio:all.accel_damping_ratio,accel_limit:all.accel_limit,torque_limit:all.torque_limit}}
 $('applyController').onclick=async()=>{$('controllerFeedback').textContent='Applying...';$('controllerFeedback').classList.remove('error');const ok=await apply(controllerValues());$('controllerFeedback').textContent=ok?'Applied':'Failed';if(!ok)$('controllerFeedback').classList.add('error')}; $('applyContact').onclick=async()=>{$('contactFeedback').textContent='Applying...';$('contactFeedback').classList.remove('error');const ok=await apply(contactValues());$('contactFeedback').textContent=ok?'Applied':'Failed';if(!ok)$('contactFeedback').classList.add('error')}; $('applyJoints').onclick=async()=>{$('jointFeedback').textContent='Applying...';$('jointFeedback').classList.remove('error');const ok=await apply({position_limits_lower:JSON.parse('['+value('lower')+']'),position_limits_upper:JSON.parse('['+value('upper')+']')});$('jointFeedback').textContent=ok?'Applied':'Failed';if(!ok)$('jointFeedback').classList.add('error')};
 function putSettings(values){$('control_mode').value=values.control_mode||'position_pd';['simulation_rate_hz','publish_rate_hz','contact_force_deadband'].forEach(id=>{if(values[id]!==undefined)$(id).value=values[id]});if(values.contact_detection_enabled!==undefined)$('contact_detection_enabled').value=String(values.contact_detection_enabled);if(values.ee_body_names)$('ee_body_names').value=values.ee_body_names.join(',');if(values.force_axis_sign)['force_axis_sign_x','force_axis_sign_y','force_axis_sign_z'].forEach((id,index)=>$(id).value=values.force_axis_sign[index]);if(values.solimp)['solimp_dmin','solimp_dmax','solimp_width','solimp_midpoint','solimp_power'].forEach((id,index)=>$(id).value=values.solimp[index]);if(values.solref)['solref_ts','solref_zeta'].forEach((id,index)=>$(id).value=values.solref[index]);if(values.friction)['friction_sliding','friction_torsional','friction_rolling'].forEach((id,index)=>$(id).value=values.friction[index]);if(values.condim!==undefined)$('condim').value=values.condim;[['natural_frequency','accel_natural_frequency_hz'],['damping_ratio','accel_damping_ratio'],['accel_limit','accel_limit'],['torque_limit','torque_limit'],['lower','position_limits_lower'],['upper','position_limits_upper']].forEach(([id,key])=>{if(values[key])$(id).value=values[key].join(',')})}
-async function refreshProfiles(){const r=await fetch('/api/settings');const d=await r.json();$('profileList').innerHTML='<option value="">Select profile</option>'+(d.settings||[]).map(name=>`<option>${name}</option>`).join('')}
-$('saveProfile').onclick=async()=>{const name=value('profileName').trim();if(!name){$('saveFeedback').textContent='Enter a name';$('saveFeedback').classList.add('error');return}$('saveFeedback').textContent='Saving...';$('saveFeedback').classList.remove('error');const values=settingsValues();const r=await fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,values})});const d=await r.json();if(!d.ok){$('saveFeedback').textContent='Failed';$('saveFeedback').classList.add('error');$('status').textContent=d.error;return}const applied=await apply(values);$('saveFeedback').textContent=applied?'Saved and applied':'Saved, apply failed';if(!applied)$('saveFeedback').classList.add('error');await refreshProfiles()};
-$('loadProfile').onclick=async()=>{const name=value('profileList');if(!name){$('loadFeedback').textContent='Select a profile';$('loadFeedback').classList.add('error');return}const r=await fetch('/api/settings/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});const d=await r.json();if(d.ok){putSettings(d.values);$('profileName').value=name;$('loadFeedback').textContent='Loaded';$('loadFeedback').classList.remove('error');$('status').textContent=`Loaded profile: ${name}`}else{$('loadFeedback').textContent='Failed';$('loadFeedback').classList.add('error');$('status').textContent=d.error}};
-function importSettingsFile(file){if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const values=JSON.parse(reader.result);putSettings(values);$('profileName').value=file.name.replace(/\.json$/i,'');$('status').textContent=`Imported file: ${file.name}`}catch(error){$('status').textContent=`Invalid settings file: ${error.message}`}};reader.readAsText(file)}
-$('browseProfile').onclick=async()=>{try{if(window.showOpenFilePicker){const [handle]=await window.showOpenFilePicker({startIn:'downloads',multiple:false,types:[{description:'MuJoCo settings JSON',accept:{'application/json':['.json']}}]});importSettingsFile(await handle.getFile())}else $('importSettings').click()}catch(error){if(error.name!=='AbortError')$('status').textContent=error.message}};
-$('importSettings').onchange=()=>importSettingsFile($('importSettings').files[0]);
-$('exportProfile').onclick=async()=>{const name=value('profileName').trim()||'mujoco_settings';const content=JSON.stringify(settingsValues(),null,2);try{if(window.showSaveFilePicker){const handle=await window.showSaveFilePicker({suggestedName:`${name}.json`,startIn:'downloads',types:[{description:'MuJoCo settings JSON',accept:{'application/json':['.json']}}]});const writer=await handle.createWritable();await writer.write(content);await writer.close();$('status').textContent=`Exported: ${name}.json`}else{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type:'application/json'}));a.download=`${name}.json`;a.click();URL.revokeObjectURL(a.href)}}catch(error){if(error.name!=='AbortError')$('status').textContent=error.message}};
+async function refreshProfiles(){
+  const directory=value('profileDirectory').trim();
+  const r=await fetch('/api/settings'+(directory?'?directory='+encodeURIComponent(directory):''));const d=await r.json();
+  if(!d.ok)throw new Error(d.error);
+  $('profileDirectory').value=d.directory;
+  $('profileList').replaceChildren(new Option('YAML 파일 선택',''),...(d.settings||[]).map(name=>new Option(name,name)));
+}
+let folderChoice=null;
+async function browseProfileDirectory(directory=''){
+  $('folderError').textContent='';$('folderConfirm').disabled=true;
+  try{
+    const response=await fetch('/api/settings/folders'+(directory?'?directory='+encodeURIComponent(directory):''));const result=await response.json();if(!result.ok)throw new Error(result.error);
+    folderChoice=result;$('folderPath').textContent=result.directory;$('folderList').replaceChildren();
+    for(const entry of result.folders){const button=document.createElement('button');button.textContent='📁 '+entry.name;button.onclick=()=>browseProfileDirectory(entry.path);$('folderList').appendChild(button)}
+    if(!result.folders.length)$('folderList').textContent='하위 폴더가 없습니다. 이 폴더를 선택할 수 있습니다.';
+    $('folderUp').disabled=result.parent===result.directory;$('folderConfirm').disabled=false;
+  }catch(e){$('folderError').textContent=e.message}
+}
+$('refreshProfiles').onclick=()=>{$('folderDialog').showModal();browseProfileDirectory(value('profileDirectory'))};
+$('folderUp').onclick=()=>browseProfileDirectory(folderChoice.parent);
+$('folderDefault').onclick=()=>browseProfileDirectory();
+$('folderCancel').onclick=()=>$('folderDialog').close();
+$('folderConfirm').onclick=async()=>{
+  const previous=value('profileDirectory');$('profileDirectory').value=folderChoice.directory;
+  try{await refreshProfiles();$('folderDialog').close()}catch(e){$('profileDirectory').value=previous;$('folderError').textContent=e.message}
+};
+$('defaultProfileDirectory').onclick=async()=>{
+  $('profileDirectory').value='';
+  try{await refreshProfiles()}catch(e){$('loadFeedback').textContent=e.message}
+};
+$('saveProfile').onclick=async()=>{
+  const button=$('saveProfile');button.disabled=true;$('saveFeedback').classList.remove('error');
+  try{
+    const name=value('profileName').trim();if(!name)throw new Error('YAML 파일 이름을 입력하세요.');
+    const r=await fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,directory:value('profileDirectory').trim(),values:settingsValues()})});const d=await r.json();if(!d.ok)throw new Error(d.error);
+    $('profileDirectory').value=d.directory;await refreshProfiles();$('profileList').value=d.name;$('profileName').value=d.name;
+    $('saveFeedback').textContent='저장 완료: '+d.path+' · 다음 시뮬레이터 시작 시 적용';
+  }catch(e){$('saveFeedback').textContent=e.message;$('saveFeedback').classList.add('error')}finally{button.disabled=false}
+};
+$('loadProfile').onclick=async()=>{
+  const button=$('loadProfile');button.disabled=true;$('loadFeedback').classList.remove('error');
+  try{
+    const name=value('profileList');if(!name)throw new Error('YAML 파일을 선택하세요.');
+    const r=await fetch('/api/settings/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,directory:value('profileDirectory').trim()})});const d=await r.json();if(!d.ok)throw new Error(d.error);
+    putSettings(d.values);$('profileName').value=d.name;$('loadFeedback').textContent='불러오기 완료: '+d.path+' · 다음 시뮬레이터 시작 시 적용';
+  }catch(e){$('loadFeedback').textContent=e.message;$('loadFeedback').classList.add('error')}finally{button.disabled=false}
+};
 $('clear').onclick=()=>{data.samples=[];render()};$('plotDuration').oninput=render;$('plotDuration').onchange=()=>{clampPlotDuration();render()};$('showGrid').onchange=render;$('autoScale').onchange=render;$('pausePlot').onchange=()=>{$('plotInfo').textContent=$('pausePlot').checked?'Paused':'Live';render()};$('download').onclick=()=>{const rows=data.samples.map(s=>[s.t,...s.position,...s.effort,...s.force,s.force_norm,s.contact]);const csv=rows.map(r=>r.join(',')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='mujoco_response.csv';a.click();URL.revokeObjectURL(a.href)};
 function setup(){const names=data.joint?.name?.length?data.joint.name:['shoulder_pan','shoulder_lift','elbow','wrist_1','wrist_2','wrist_3'];$('joints').innerHTML='<div class="field"><label>Lower limits (rad)</label><input id="lower" value="-6.2831,-6.2831,-3.1415,-6.2831,-6.2831,-6.2831"></div><div class="field"><label>Upper limits (rad)</label><input id="upper" value="6.2831,6.2831,3.1415,6.2831,6.2831,6.2831"></div>';}
-setup();refreshProfiles();setInterval(refresh,250);setInterval(refreshNodes,1000);refresh();refreshNodes();addEventListener('resize',render);
+setup();refreshProfiles().catch(e=>{$('loadFeedback').textContent=e.message});setInterval(refresh,250);setInterval(refreshNodes,1000);refresh();refreshNodes();addEventListener('resize',render);
 </script>
 </body>
 </html>

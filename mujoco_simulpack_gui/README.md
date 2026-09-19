@@ -9,8 +9,16 @@ the `mujoco_simulpack` ROS2 Humble simulator.
 - Configure controller, inverse-dynamics, joint-limit, and contact settings.
 - Change contact solver parameters: `solimp`, `solref`, friction, and `condim`.
 - Select the reported sensor force direction independently for X, Y, and Z.
-- Save and load JSON setting profiles under:
-  `~/.ros/mujoco_simulpack_gui/settings`.
+- Save and load ROS parameter YAML profiles under the simulator package's
+  `config/profiles/` directory (the source package in a symlink workspace).
+  The GUI selects the default folder on page load. Use the folder picker to
+  choose another location, then select a YAML file and load it.
+  Use `.yaml` filenames; saved files are passed directly to the next launch.
+  Existing JSON profiles in `~/.ros/mujoco_simulpack_gui/settings` are copied
+  to YAML on GUI startup without overwriting an existing YAML or deleting JSON.
+- Saving or loading a profile stages it for the next simulator launch without
+  changing a running simulator. Start the simulator from the GUI after loading
+  the profile to apply the complete configuration from startup.
 - Monitor joint positions, joint efforts, contact force, contact state, and
   recent samples through plots.
 
@@ -46,8 +54,10 @@ ros2 launch mujoco_simulpack_gui mujoco_simulpack_gui.launch.py port:=18101
 
 ## Runtime Settings
 
-The GUI sends ROS parameter updates to `/ur10_contact_sim`. Contact settings
+The individual **Apply** buttons send live ROS parameter updates to
+`/ur10_contact_sim`. Contact settings
 are applied to environment geoms, while robot-link geoms are left unchanged.
+
 This prevents friction and `condim` settings from unintentionally locking the
 robot's own links together.
 

@@ -1,0 +1,104 @@
+/ur10_contact_sim:
+  ros__parameters:
+    model_file: models/ur10e/ur10e_contact_scene.xml
+    use_viewer: true
+    publish_rate_hz: 1000.0
+    simulation_rate_hz: 1000.0
+    control_mode: position_pd
+    joint_names:
+    - shoulder_pan_joint
+    - shoulder_lift_joint
+    - elbow_joint
+    - wrist_1_joint
+    - wrist_2_joint
+    - wrist_3_joint
+    actuator_names:
+    - shoulder_pan
+    - shoulder_lift
+    - elbow
+    - wrist_1
+    - wrist_2
+    - wrist_3
+    initial_positions:
+    - 0.0
+    - -1.5708
+    - -1.5708
+    - -1.5708
+    - 1.5708
+    - 0.0
+    position_limits_lower:
+    - -6.2831
+    - -6.2831
+    - -3.1415
+    - -6.2831
+    - -6.2831
+    - -6.2831
+    position_limits_upper:
+    - 6.2831
+    - 6.2831
+    - 3.1415
+    - 6.2831
+    - 6.2831
+    - 6.2831
+    joint_state_topic: /armsimul/joint_states
+    joint_position_command_topic: /armsimul/joint_position_cmd
+    joint_position_array_command_topic: /armsimul/joint_position_cmd_array
+    joint_trajectory_command_topic: /joint_trajectory_controller/joint_trajectory
+    ee_wrench_topic: /armsimul/ee_wrench
+    ft_sensor_wrench_topic: /armsimul/ft_sensor_wrench
+    ft_sensor_wrench_raw_topic: /armsimul/ft_sensor_wrench_raw
+    contact_state_topic: /armsimul/contact_state
+    frame_id: base
+    ee_frame_id: attachment_site
+    ft_sensor_site_name: attachment_site
+    ee_body_names:
+    - wrist_3_link
+    - nrs_spindle
+    contact_force_deadband: 0.01
+    force_axis_sign:
+    - -1.0
+    - -1.0
+    - -1.0
+    contact_detection_enabled: true
+    solimp:
+    - 0.9
+    - 0.95
+    - 0.001
+    - 0.5
+    - 2.0
+    solref:
+    - 0.02
+    - 1.0
+    friction:
+    - 1.0
+    - 0.1
+    - 0.001
+    condim: 1
+    accel_natural_frequency_hz:
+    - 6.0
+    - 6.0
+    - 6.0
+    - 8.0
+    - 8.0
+    - 8.0
+    accel_damping_ratio:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    accel_limit:
+    - 80.0
+    - 80.0
+    - 80.0
+    - 120.0
+    - 120.0
+    - 120.0
+    torque_limit:
+    - 330.0
+    - 330.0
+    - 150.0
+    - 56.0
+    - 56.0
+    - 56.0

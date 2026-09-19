@@ -7,6 +7,7 @@
   
   <!-- 렌더/조명/환경 설정 -->
   <visual> 
+    <scale framelength="0.2" framewidth="0.02"/>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0 0 0"/>
     <rgba haze="0.15 0.25 0.35 1"/>
     <global azimuth="120" elevation="-20"/>
@@ -23,6 +24,8 @@
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
     <!-- 접촉 박스 (시각 표시)에 쓸 빨간 머터리얼 -->
     <material name="contact_red" rgba="0.8 0.15 0.1 1"/>
+    <material name="contact_amber" rgba="0.95 0.55 0.12 1"/>
+    <mesh name="contact_hemisphere_mesh" file="contact_hemisphere.obj"/>
   </asset>
 
   <!-- 장면의 물리적 객체들 -->
@@ -43,6 +46,11 @@
       <!-- friction="sliding, tortional(0.2*sliding), rolling(0.01*sliding)" -->
       <!-- solimp/solref: soft constraint/contact solver 파라미터 -->
       <!-- material="contact_red": 위에서 정의한 빨간 머터리얼을 적용 -->
+    </body>
+    <!-- 160 mm diameter; 60 mm gap from box; apex level with box top. -->
+    <body name="contact_hemisphere" pos="0.5 -0.22 0.38">
+      <geom name="contact_hemisphere_geom" type="mesh" mesh="contact_hemisphere_mesh"
+            material="contact_amber" condim="4" friction="1.0 0.1 0.001"/>
     </body>
   </worldbody>
 </mujoco>
