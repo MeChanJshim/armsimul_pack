@@ -185,6 +185,7 @@ class Ur10ContactSim(Node):
         sim_rate = float(self.get_parameter("simulation_rate_hz").value)
         pub_rate = float(self.get_parameter("publish_rate_hz").value)
         self.sim_period = 1.0 / sim_rate
+        self.model.opt.timestep = self.sim_period
         self.sim_timer = self.create_timer(1.0 / sim_rate, self._step_simulation)
         self.publish_timer = self.create_timer(1.0 / pub_rate, self._publish_state)
 
@@ -241,99 +242,78 @@ class Ur10ContactSim(Node):
             )
 
     def _on_parameters_changed(self, parameters):
+        # Validate the entire batch before touching the simulator or its timers.
+        values = {p.name: p.value for p in parameters}
+        arrays = {
+            "accel_natural_frequency_hz": "accel_natural_frequency_hz",
+            "accel_damping_ratio": "accel_damping_ratio",
+            "accel_limit": "accel_limit", "torque_limit": "torque_limit",
+            "position_limits_lower": "lower_limits", "position_limits_upper": "upper_limits",
+        }
         try:
-            values = {parameter.name: parameter.value for parameter in parameters}
-            if "simulation_rate_hz" in values or "publish_rate_hz" in values:
-                simulation_rate = float(values.get("simulation_rate_hz", self.sim_period ** -1))
-                publish_rate = float(values.get("publish_rate_hz", 1.0 / self.publish_timer.timer_period_ns * 1e9))
-                if simulation_rate <= 0.0 or publish_rate <= 0.0:
-                    return SetParametersResult(successful=False, reason="Rates must be positive")
-                if hasattr(self, "sim_timer"):
-                    self.destroy_timer(self.sim_timer)
-                    self.sim_timer = self.create_timer(1.0 / simulation_rate, self._step_simulation)
-                if hasattr(self, "publish_timer"):
-                    self.destroy_timer(self.publish_timer)
-                    self.publish_timer = self.create_timer(1.0 / publish_rate, self._publish_state)
-                self.sim_period = 1.0 / simulation_rate
-            if "contact_force_deadband" in values:
-                deadband = float(values["contact_force_deadband"])
-                if deadband < 0.0:
-                    return SetParametersResult(successful=False, reason="contact_force_deadband must not be negative")
-                self.force_deadband = deadband
-            if "contact_detection_enabled" in values:
-                self.contact_detection_enabled = bool(values["contact_detection_enabled"])
-            if "force_axis_sign" in values:
-                force_axis_sign = np.asarray(values["force_axis_sign"], dtype=float)
-                if len(force_axis_sign) != 3 or not np.all(np.isfinite(force_axis_sign)):
-                    return SetParametersResult(
-                        successful=False,
-                        reason="force_axis_sign must contain three finite values",
-                    )
-                if not np.all(np.isin(force_axis_sign, (-1.0, 1.0))):
-                    return SetParametersResult(
-                        successful=False,
-                        reason="force_axis_sign values must be -1 or 1",
-                    )
-                self.force_axis_sign = force_axis_sign
+            for name in ("simulation_rate_hz", "publish_rate_hz", "contact_force_deadband"):
+                if name in values:
+                    value = float(values[name])
+                    if not np.isfinite(value) or value < 0 or (name != "contact_force_deadband" and value == 0):
+                        raise ValueError(f"Invalid {name}")
+                    values[name] = value
+            widths = {"force_axis_sign": 3, "solimp": 5, "solref": 2, "friction": 3}
+            widths.update({name: len(self.joint_names) for name in arrays})
+            for name, width in widths.items():
+                if name not in values:
+                    continue
+                value = np.asarray(values[name], dtype=float)
+                if value.shape != (width,) or not np.all(np.isfinite(value)):
+                    raise ValueError(f"{name} must contain {width} finite values")
+                if name == "force_axis_sign" and not np.all(np.isin(value, (-1.0, 1.0))):
+                    raise ValueError("force_axis_sign values must be -1 or 1")
+                if name in ("friction", "accel_damping_ratio") and np.any(value < 0):
+                    raise ValueError(f"{name} must be non-negative")
+                if name in ("accel_natural_frequency_hz", "accel_limit", "torque_limit") and np.any(value <= 0):
+                    raise ValueError(f"{name} must be positive")
+                values[name] = value
+            lower = values.get("position_limits_lower", self.lower_limits)
+            upper = values.get("position_limits_upper", self.upper_limits)
+            if np.any(lower > upper):
+                raise ValueError("Lower joint limits must not exceed upper limits")
+            if "condim" in values and values["condim"] not in (1, 3, 4, 6):
+                raise ValueError("condim must be one of 1, 3, 4, or 6")
             if "ee_body_names" in values:
-                body_names = [str(name) for name in values["ee_body_names"]]
-                if not body_names:
-                    return SetParametersResult(successful=False, reason="ee_body_names must not be empty")
-                self.ee_body_names = set(body_names)
-            for parameter_name, width in (("solimp", 5), ("solref", 2)):
-                if parameter_name in values:
-                    contact_values = np.asarray(values[parameter_name], dtype=float)
-                    if len(contact_values) != width or not np.all(np.isfinite(contact_values)):
-                        return SetParametersResult(
-                            successful=False,
-                            reason=f"{parameter_name} must contain {width} finite values",
-                        )
-                    if parameter_name == "solimp":
-                        self.model.geom_solimp[self.contact_geom_ids, :] = contact_values
-                    else:
-                        self.model.geom_solref[self.contact_geom_ids, :] = contact_values
-            if "friction" in values:
-                friction = np.asarray(values["friction"], dtype=float)
-                if len(friction) != 3 or not np.all(np.isfinite(friction)) or np.any(friction < 0.0):
-                    return SetParametersResult(
-                        successful=False, reason="friction must contain three non-negative values")
-                self.model.geom_friction[self.contact_geom_ids, :] = friction
-            if "condim" in values:
-                condim = int(values["condim"])
-                if condim not in (1, 3, 4, 6):
-                    return SetParametersResult(
-                        successful=False, reason="condim must be one of 1, 3, 4, or 6")
-                self.model.geom_condim[self.contact_geom_ids] = condim
+                names = set(values["ee_body_names"])
+                if not names or any(self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_BODY, name) < 0 for name in names):
+                    raise ValueError("ee_body_names must identify existing bodies")
+                values["ee_body_names"] = names
             if "control_mode" in values:
-                if values["control_mode"] not in ("position_pd", "inverse_dynamics_accel"):
-                    return SetParametersResult(
-                        successful=False, reason="Unsupported control_mode")
-                self.control_mode = str(values["control_mode"])
-
-            arrays = {
-                "accel_natural_frequency_hz": "accel_natural_frequency_hz",
-                "accel_damping_ratio": "accel_damping_ratio",
-                "accel_limit": "accel_limit",
-                "torque_limit": "torque_limit",
-            }
-            for parameter_name, attribute_name in arrays.items():
-                if parameter_name in values:
-                    array = np.asarray(values[parameter_name], dtype=float)
-                    if len(array) != len(self.joint_names) or not np.all(np.isfinite(array)):
-                        return SetParametersResult(
-                            successful=False,
-                            reason=f"{parameter_name} must contain six finite values",
-                        )
-                    if parameter_name in ("accel_natural_frequency_hz", "accel_limit", "torque_limit") and np.any(array <= 0.0):
-                        return SetParametersResult(
-                            successful=False, reason=f"{parameter_name} must be positive")
-                    if parameter_name == "accel_damping_ratio" and np.any(array < 0.0):
-                        return SetParametersResult(
-                            successful=False, reason="accel_damping_ratio must not be negative")
-                    setattr(self, attribute_name, array)
-            return SetParametersResult(successful=True)
+                mode = values["control_mode"]
+                if mode not in ("position_pd", "inverse_dynamics_accel"):
+                    raise ValueError("Unsupported control_mode")
+                if mode != self.control_mode:
+                    raise ValueError("Changing control_mode requires restarting with the matching actuator model")
         except (TypeError, ValueError) as exc:
             return SetParametersResult(successful=False, reason=str(exc))
+
+        for name, attribute in arrays.items():
+            if name in values:
+                setattr(self, attribute, values[name])
+        for name, attribute in (("contact_force_deadband", "force_deadband"),
+                                ("contact_detection_enabled", "contact_detection_enabled"),
+                                ("force_axis_sign", "force_axis_sign"), ("ee_body_names", "ee_body_names")):
+            if name in values:
+                setattr(self, attribute, values[name])
+        for name in ("solimp", "solref", "friction", "condim"):
+            if name in values:
+                getattr(self.model, "geom_" + name)[self.contact_geom_ids] = values[name]
+        if "position_limits_lower" in values or "position_limits_upper" in values:
+            self.target_positions = np.clip(self.target_positions, self.lower_limits, self.upper_limits)
+        if "simulation_rate_hz" in values:
+            self.sim_period = 1.0 / values["simulation_rate_hz"]
+            self.model.opt.timestep = self.sim_period
+            self.destroy_timer(self.sim_timer)
+            self.sim_timer = self.create_timer(self.sim_period, self._step_simulation)
+        if "publish_rate_hz" in values:
+            self.destroy_timer(self.publish_timer)
+            self.publish_timer = self.create_timer(1.0 / values["publish_rate_hz"], self._publish_state)
+        return SetParametersResult(successful=True)
 
     def _build_body_name_by_geom(self) -> Dict[int, str]:
         body_names = {}
@@ -403,9 +383,9 @@ class Ur10ContactSim(Node):
 
     def _set_target_positions(self, positions: Iterable[float]) -> None:
         target = np.array(list(positions), dtype=float)
-        if len(target) != len(self.joint_names):
+        if target.shape != (len(self.joint_names),) or not np.all(np.isfinite(target)):
             self.get_logger().warn(
-                f"Ignoring command with {len(target)} positions; expected {len(self.joint_names)}."
+                f"Ignoring command: expected {len(self.joint_names)} finite joint positions."
             )
             return
         self.target_positions = np.clip(target, self.lower_limits, self.upper_limits)
@@ -542,7 +522,8 @@ class Ur10ContactSim(Node):
         self.wrench_pub.publish(wrench)
 
         sensor_force, sensor_torque = self._sum_ft_sensor_wrench()
-        sensor_force *= self.force_axis_sign
+        # Keep the physical sensor wrench consistent for contact estimation.
+        # Legacy per-axis force signs apply only to the controller ee_wrench.
         sensor_wrench = WrenchStamped()
         sensor_wrench.header.stamp = stamp
         sensor_wrench.header.frame_id = self.ft_sensor_site_name
@@ -554,8 +535,7 @@ class Ur10ContactSim(Node):
         sensor_wrench.wrench.torque.z = float(sensor_torque[2])
         self.ft_sensor_wrench_pub.publish(sensor_wrench)
 
-        # NRS intrinsic contact sensing consumes geometry_msgs/Wrench rather
-        # than WrenchStamped, so expose the same sensor-frame values directly.
+        # Legacy unstamped compatibility output; identical physical sensor wrench.
         raw_wrench = Wrench()
         raw_wrench.force.x = float(sensor_force[0])
         raw_wrench.force.y = float(sensor_force[1])

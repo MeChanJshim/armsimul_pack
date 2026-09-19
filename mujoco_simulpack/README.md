@@ -135,7 +135,7 @@ Important fields:
 - `ft_sensor_site_name`: MuJoCo site used as the virtual FT sensor origin and
   coordinate frame. The default is `attachment_site`.
 - `contact_force_deadband`: small force threshold in newtons.
-- `force_axis_sign`: per-axis sensor sign applied to the published force
+- `force_axis_sign`: per-axis controller sign applied to the `/armsimul/ee_wrench` force
   vector, for example `[-1.0, 1.0, 1.0]` flips only the X force direction.
 
 The force-axis sign changes the reported `/armsimul/ee_wrench` sensor value and
@@ -377,3 +377,29 @@ source install/setup.bash
 The MuJoCo viewer starts with coordinate axes hidden. Press **F6** to toggle only the selected contact body's local XYZ frame (red, green, blue), using the small frame dimensions in the scene XML. The arrows follow the body pose and are visual decorations, so they do not affect collisions. `viewer_frame_body` selects a body explicitly; by default the last existing entry in `ee_body_names` is used (`nrs_spindle` in the spindle model, or `wrist_3_link` in the model without a spindle). F6 toggles this overlay on/off instead of cycling through native all-body frames. Restart the simulator to load this viewer change.
 
 Small contact-body axes are drawn as short colored arrows beyond the body bounds, with thin stems along the same axes from the true body origin. This prevents the spindle mesh from hiding the arrows. F6 logs `Contact body axes: shown/hidden`; visibility does not depend on contact detection.
+
+## Wrench validity and runtime updates
+
+`force_axis_sign` remains a compatibility setting for the controller-facing
+`/armsimul/ee_wrench` force. It does **not** alter `/armsimul/ft_sensor_wrench`
+or `/armsimul/ft_sensor_wrench_raw`: these preserve the physical force/torque
+pair at the sensor origin. For contact sensing, use the sensor topics and use
+NRS `wrench_sign` to reverse both force and torque if needed.
+
+Invalid parameter batches are validated before mutating simulator state.
+Joint limits also update the live command limiter. Simulation-rate changes
+update the physics timestep as well as the timer. Changing controller mode
+requires restarting with its matching XML actuator model. Nonfinite joint
+commands are ignored without replacing the last valid target.
+
+After sourcing ROS and the workspace, run the headless regression suite:
+
+```bash
+ROS_DOMAIN_ID=216 ROS_LOCALHOST_ONLY=1 python3 -m unittest discover -s test -v
+```
+
+The same suite also covers the torque-actuator model:
+
+```bash
+ROS_DOMAIN_ID=216 ROS_LOCALHOST_ONLY=1 SIM_TEST_MODE=inverse_dynamics_accel python3 -m unittest discover -s test -v
+```

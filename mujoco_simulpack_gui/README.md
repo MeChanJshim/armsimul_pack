@@ -61,7 +61,7 @@ are applied to environment geoms, while robot-link geoms are left unchanged.
 This prevents friction and `condim` settings from unintentionally locking the
 robot's own links together.
 
-The sensor direction selectors multiply the published force vector by
+The direction selectors multiply the controller-facing `/armsimul/ee_wrench` force vector by
 `[Fx_sign, Fy_sign, Fz_sign]`, where each sign is `+1` or `-1`. For example,
 selecting `-Z` changes a measured `Fz=-10 N` into `Fz=+10 N` for downstream
 force control. The physical MuJoCo contact direction is unchanged.
@@ -98,3 +98,7 @@ It controls the simulator through its parameter service and can launch:
 
 - `mujoco_simulpack/ur10_contact_sim.launch.py`
 - `mujoco_simulpack/realtime_joint_position_demo`
+
+The FT sensor topics keep their original, consistent force/torque pair for
+contact estimation. Their sign is independent of these controller selectors;
+use the NRS wrench-direction setting to reverse the entire sensor wrench.
